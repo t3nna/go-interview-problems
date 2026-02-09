@@ -7,13 +7,17 @@ func Merge(channels ...<-chan int) <-chan int {
 	res := make(chan int)
 
 	var wg sync.WaitGroup
+
+	wg.Add(len(channels))
+
 	for _, ch := range channels {
-		wg.Add(1)
 		go func(ch <-chan int) {
-			for intChan := range ch {
-				res <- intChan
+			defer wg.Done()
+
+			for val := range ch {
+				res <- val
 			}
-			wg.Done()
+
 		}(ch)
 	}
 
