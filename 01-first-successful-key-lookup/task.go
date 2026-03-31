@@ -17,58 +17,56 @@ func Get(ctx context.Context, getter Getter, addresses []string, key string) (st
 	if len(addresses) == 0 {
 		return "", nil
 	}
+	if ctx.Err() != nil {
+		return "", errors.New("")
+	}
 
-	// Create a context that we can cancel as soon as we get a success.
-	// This propagates the cancellation to all other ongoing requests.
-	ctx, cancel := context.WithCancel(ctx)
+	ctxCancel, cancel := context.WithCancel(ctx)
+
 	defer cancel()
 
-	// Use a buffered channel with a size equal to the number of addresses.
-	// This prevents goroutine leaks by ensuring 'send' operations are non-blocking.
-	resCh := make(chan string, len(addresses))
+	errorCh := make(chan error, len(addresses))
+	valCh := make(chan string, len(addresses))
 
-	// Use a WaitGroup to track all goroutines.
 	var wg sync.WaitGroup
-	wg.Add(len(addresses))
+	go func() {
+		wg.Wait()
+		close(errorCh)
+		close(valCh)
+	}()
 
 	for _, address := range addresses {
-		// Fix: Pass 'address' as a parameter to avoid the common loop variable bug.
+		wg.Add(1)
 		go func(addr string) {
+
 			defer wg.Done()
 
-			val, err := getter.Get(ctx, addr, key)
+			val, err := getter.Get(ctxCancel, addr, key)
+
 			if err != nil {
-				// On error, we just finish. If ALL fail, the wg.Wait() goroutine handles it.
+				errorCh <- err
 				return
 			}
 
-			// First success wins.
-			select {
-			case resCh <- val:
-				// Successfully sent result; cancel remaining requests.
-				cancel()
-			case <-ctx.Done():
-				// Already finished or cancelled elsewhere.
-			}
+			valCh <- val
+
 		}(address)
 	}
 
-	// This goroutine implements the "plan to stop"[cite: 658].
-	// It waits for all workers to finish (either success or fail) and closes the channel.
-	allDone := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(allDone)
-	}()
+	errCount := 0
+	for {
+		select {
+		case val := <-valCh:
+			cancel()
+			return val, nil
+		case <-errorCh:
+			errCount++
+			if errCount == len(addresses) {
+				return "", errors.New("not found")
+			}
+		case <-ctxCancel.Done():
+			return "", ctxCancel.Err()
+		}
 
-	select {
-	case result := <-resCh:
-		return result, nil
-	case <-allDone:
-		// If we reach here, it means all goroutines called wg.Done()
-		// without any of them sending a success to resCh.
-		return "", errors.New("all requests failed")
-	case <-ctx.Done():
-		return "", ctx.Err()
 	}
 }

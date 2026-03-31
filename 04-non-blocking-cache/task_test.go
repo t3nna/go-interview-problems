@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -33,6 +34,7 @@ func newMockClient(responses map[string][]response) *mockClient {
 }
 
 func (c *mockClient) Get(address string) (string, error) {
+	fmt.Println(address)
 	select {
 	case resp := <-c.responses[address]:
 		<-time.After(resp.delay)
@@ -173,4 +175,3 @@ func TestGet(t *testing.T) {
 		})
 	}
 }
-
